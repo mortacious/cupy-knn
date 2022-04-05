@@ -1,0 +1,4 @@
+include LICENSE
+include cupy_knn/cuda/*.cuh
+include cupy_knn/cuda/*.cu
+
