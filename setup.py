@@ -32,7 +32,7 @@ setup(
     version=version,
     author="Felix Igelbrink",
     author_email="felix.igelbrink@uni-osnabrueck.de",
-    description="A fast nearest neighbor index implementation for 3-D points using a left balanced BVH-tree.",
+    description="A fast nearest neighbor index cuda implementation for 3-D points using a left balanced BVH-tree.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/mortacious/cupy-knn",
@@ -49,7 +49,7 @@ setup(
     },
     license="MIT",
     classifiers=[
-        "Environment :: GPU :: NVIDIA CUDA"
+        "Environment :: GPU :: NVIDIA CUDA",
         "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
