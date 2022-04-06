@@ -127,5 +127,6 @@ __global__ void query_knn_kernel(const BVHNode *nodes,
         return;
     StaticPriorityQueue<float, K> queue(max_radius);
     find_KNN(nodes, points, sorted_indices, root_index, &queries[query_idx], queue);
+    __syncwarp(); // synchronize the warp before the write operation
     queue.write_results(&indices_out[query_idx * K], &distances_out[query_idx * K], &n_neighbors_out[query_idx]); // write back the results
 }

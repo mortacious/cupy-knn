@@ -18,7 +18,9 @@ _construct_tree_kernels = cp.RawModule(code=_lbvh_src,
                                                          'compute_morton_points_kernel',
                                                          'initialize_tree_kernel',
                                                          'construct_tree_kernel',
-                                                         'optimize_tree_kernel'))
+                                                         'optimize_tree_kernel',
+                                                         'compute_free_indices_kernel',
+                                                         'compact_tree_kernel'))
 
 with open(_file_path / "cuda/query_knn_kernels.cu", 'r') as f:
     _query_knn_src = f.read()
@@ -36,12 +38,23 @@ class LBVHIndex(object):
     sort_threshold: int
         Threshold, above which the query points will be sorted in morton order prior
         to passing them to the knn query kernel to prevent warp divergence.
+
+    compact: bool
+        Compact the tree after optimization by removing the freed space in between. This is done in-place by default.
+        If the leaf_size is 1, this parameter is ignored.
+
+    shrink_to_fit: bool
+        If the tree is compacted, shrink it's used buffer to fit the new size.
+        This requires a full copy, which might not be possible on the gpu depending on the index size.
+        If compact is False this parameter is ignored.
     """
-    def __init__(self, leaf_size: int = 32, sort_threshold: int = 10_000):
+    def __init__(self, leaf_size: int = 32, sort_threshold: int = 10_000, compact=True, shrink_to_fit=False):
         self.num_objects = -1
         self.num_nodes = -1
         self.leaf_size = leaf_size
         self._sort_threshold = sort_threshold
+        self.compact = compact
+        self.shrink_to_fit = shrink_to_fit
 
         self.points = None
         self.sorted_indices = None
@@ -60,8 +73,9 @@ class LBVHIndex(object):
         self._compute_morton_points_kernel_float = _construct_tree_kernels.get_function('compute_morton_points_kernel')
         self._construct_tree_kernel_float = _construct_tree_kernels.get_function('construct_tree_kernel')
         self._initialize_tree_kernel_float = _construct_tree_kernels.get_function('initialize_tree_kernel')
-
         self._optimize_tree_kernel_float = _construct_tree_kernels.get_function('optimize_tree_kernel')
+        self._compute_free_indices_kernel = _construct_tree_kernels.get_function('compute_free_indices_kernel')
+        self._compact_tree_kernel = _construct_tree_kernels.get_function('compact_tree_kernel')
 
     def prepare_knn(self, k: int, radius: Optional[float] = None):
         """
@@ -141,10 +155,51 @@ class LBVHIndex(object):
                                                                 root_node,
                                                                 morton_codes,
                                                                 self.num_objects))
-        self._optimize_tree_kernel_float(grid_dim, block_dim, (self.nodes,
-                                                               root_node,
-                                                               cp.uint32(self.leaf_size),
-                                                               self.num_objects))
+        if self.leaf_size > 1:
+            valid = cp.full(self.num_nodes, 1, dtype=cp.uint32)
+            self._optimize_tree_kernel_float(grid_dim, block_dim, (self.nodes,
+                                                                   root_node,
+                                                                   valid,
+                                                                   cp.uint32(self.leaf_size),
+                                                                   self.num_objects))
+            # compact the tree to increase bandwidth
+            if self.compact:
+
+                # compute the prefix sum of the valid array to determine the indices of the free space
+                valid_sums = cp.zeros(self.num_nodes+1, dtype=cp.uint32)
+                # allocate the one element larger than the number of nodes
+                # cumsum must start with 0 here so leave out the first element
+                cp.cumsum(valid, out=valid_sums[1:])
+
+                # get the number of actually used nodes after optimization
+                new_node_count = valid_sums[self.num_nodes].get()
+                # leave out the last element again to align with the valid array
+
+                valid_sums_aligned = valid_sums[:-1]
+
+                # compute the isum parameter to get the indices of the free elements
+                isum = (cp.arange(self.num_nodes, dtype=cp.uint32)-valid_sums_aligned)
+                free_indices_size = int(isum[new_node_count].get())  # number of free elements in the optimized tree array
+
+                free = valid[:free_indices_size]  # reuse the valid space as it is not needed any more
+
+                # compute the free indices
+                block_dim, grid_dim = select_block_grid_sizes(isum.device, new_node_count)
+                self._compute_free_indices_kernel(grid_dim, block_dim, (valid_sums, isum, free, new_node_count))
+
+                # get the sum of the first object that has to be moved
+                first_moved = valid_sums[new_node_count].get()
+
+                block_dim, grid_dim = select_block_grid_sizes(isum.device, self.num_nodes)
+
+                self._compact_tree_kernel(grid_dim, block_dim, (self.nodes, root_node, valid_sums_aligned, free, first_moved, new_node_count, self.num_nodes))
+
+                if self.shrink_to_fit:
+                    nodes_old = self.nodes
+                    self.nodes = cp.cuda.alloc(self.tree_dtype.itemsize * new_node_count)
+                    self.nodes.copy_from_device(nodes_old, self.tree_dtype.itemsize * new_node_count)
+
+                self.num_nodes = new_node_count
 
         # fetch to root node's location in the tree
         self.root_node = int(root_node.get()[0])

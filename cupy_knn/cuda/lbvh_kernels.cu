@@ -96,6 +96,7 @@ __global__ void construct_tree_kernel(BVHNode *nodes,
 
 __global__ void optimize_tree_kernel(BVHNode *nodes,
                                      unsigned int* root_index,
+                                     unsigned int* valid,
                                      unsigned int max_node_size,
                                      unsigned int N)
 {
@@ -112,6 +113,7 @@ __global__ void optimize_tree_kernel(BVHNode *nodes,
     unsigned int node_size;
 
     while(true) {
+        //printf("current node is %u from leaf %u\n", current_idx, leaf_idx);
         if(current_idx == UINT_MAX) {
             //arrived at root by merging all nodes.
             root_index[0] = leaf_idx;
@@ -119,22 +121,158 @@ __global__ void optimize_tree_kernel(BVHNode *nodes,
         }
         const unsigned int parent_idx = current->parent;
         parent = &nodes[parent_idx]; // this might change due to merges
+        //printf("parent node of node %u is %u\n", current_idx, parent_idx);
 
         node_size = current->range_right - current->range_left + 1;
-
+        //printf("Size of node %u is (%u)\n", current_idx, node_size);
         if(node_size <= max_node_size && leaf_idx <= (current_idx-N)) {
+            //printf("merging node %u with leaf %u\n", current_idx, leaf_idx);
             // only one thread will do this
             make_leaf(current_idx, leaf_idx, nodes, N);
             current->atomic = -1; // mark the current node as invalid to make it removable by the optimization
+            valid[current_idx] = 0;
+
+            //printf("New leaf %u node size %u\n", leaf_idx, nodes[leaf_idx].range_right - nodes[leaf_idx].range_left + 1);
             current = parent;
             current_idx = parent_idx;
-        } else if(node_size <= max_node_size && leaf_idx > current_idx) {
+        } else if(node_size <= max_node_size && leaf_idx > (current_idx-N)) {
+            //printf("Setting leaf %u to invalid\n", leaf_idx);
             // the other thread will just set it's leaf to invalid
             // as it will be merged by the other thread and abort
             leaf->atomic = -1;
+            //leaf->child_left = 0;
+            valid[leaf_idx] = 0;
+
             return;
         } else {
             return; // nothing to do here so abort
         }
     }
+}
+
+__forceinline__ __device__ bool valid_node(const unsigned int* valid_sums, unsigned int idx)
+{
+    return valid_sums[idx] != valid_sums[idx+1];
+}
+
+__global__ void compute_free_indices_kernel(const unsigned int* valid_sums,
+                                     const unsigned int* isums,
+                                     unsigned int* free_indices,
+                                     unsigned int N)
+{
+    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= N)
+        return;
+
+    if(!valid_node(valid_sums, idx)) {
+        auto free_index = isums[idx];
+        free_indices[free_index] = idx;
+    }
+}
+
+__global__ void compact_tree_kernel(BVHNode *nodes,
+                                     unsigned int* root_index,
+                                     const unsigned int* valid_sums,
+                                     const unsigned int* free_positions,
+                                     unsigned int first_moved,
+                                     unsigned int node_cnt_new,
+                                     unsigned int N)
+{
+    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= N)
+        return;
+
+    //printf("Processing current index %u\n", idx);
+    // correction of id's in non-moved part
+    if (idx < node_cnt_new) {
+        //printf("Node %u will not be moved\n", idx);
+        // if the node is valid
+        if (valid_node(valid_sums, idx))
+        {
+            BVHNode* node = &nodes[idx];
+
+            unsigned int parent_idx = node->parent;
+            // adjust the parent index in case the parent will be moved
+            if ((parent_idx >= node_cnt_new) && (parent_idx < N)) {
+                //printf("Adjusting parent of node %u from %u to %u\n", idx, parent_idx, new_parent);
+                node->parent = free_positions[valid_sums[parent_idx] - first_moved];
+            }
+
+            // same with the left and right children
+            unsigned int left_idx = nodes[idx].child_left;
+            if((left_idx >= node_cnt_new) && (left_idx < N)) {
+                //printf("Adjusting left child of node %u from %u to %u\n", idx, left_idx, new_left);
+                node->child_left = free_positions[valid_sums[left_idx] - first_moved];
+            }
+
+            unsigned int right_idx = nodes[idx].child_right;
+            if((right_idx >= node_cnt_new) && (right_idx < N)) {
+                //printf("Adjusting right child of node %u from %u to %u\n", idx, right_idx, new_right);
+                node->child_right = free_positions[valid_sums[right_idx] - first_moved];
+            }
+        }
+
+    // actually move nodes into the non-moved section here
+    } else if(idx >= node_cnt_new) {
+        // if the node is valid
+        if (valid_node(valid_sums, idx))
+        {
+
+            BVHNode* node = &nodes[idx];
+            unsigned int new_position = free_positions[valid_sums[idx] - first_moved];
+            BVHNode* new_node = &nodes[new_position];
+            // copy the static parameters into the new node
+            //printf("Node %u will be moved to new position %u\n", idx, new_position);
+
+            new_node->bounds = node->bounds;
+            new_node->atomic = node->atomic;
+            node->atomic = -1; // mark node as invalid for debugging
+            new_node->range_left = node->range_left;
+            new_node->range_right = node->range_right;
+
+            // adjust the parent and child indices if required
+            unsigned int parent_idx = node->parent;
+            if ((parent_idx >= node_cnt_new) && (parent_idx < N)) {
+                //printf("Adjusting parent of node %u from %u to %u\n", idx, parent_idx, new_parent);
+                parent_idx = free_positions[valid_sums[parent_idx] - first_moved];
+            }
+
+            if(parent_idx == UINT_MAX) {
+                //printf("Adjusting root_index from %u to %u\n", root_index[0], new_position);
+                // this node is the root node so adjust the root index to the new position
+                root_index[0] = new_position;
+            }
+
+            new_node->parent = parent_idx;
+
+            unsigned int left_idx = node->child_left;
+            if ((left_idx >= node_cnt_new) && (left_idx < N)) {
+                //printf("Adjusting left child of node %u from %u to %u\n", idx, left_idx, new_left);
+                left_idx = free_positions[valid_sums[left_idx] - first_moved];
+            }
+
+            new_node->child_left = left_idx;
+
+            unsigned int right_idx = node->child_right;
+            if ((right_idx >= node_cnt_new) && (right_idx < N)) {
+                //printf("Adjusting right child of node %u from %u to %u\n", idx, right_idx, new_right);
+
+                right_idx = free_positions[valid_sums[right_idx] - first_moved];
+            }
+
+            new_node->child_right = right_idx;
+
+//            // adjust the pointer of the leaf children to this node to be safe
+//            if(left_idx > N) {
+//                nodes[left_idx].parent = new_position;
+//            }
+//            if(right_idx > N) {
+//                nodes[right_idx].parent = new_position;
+//            }
+
+        }
+    }
+
+
+
 }
