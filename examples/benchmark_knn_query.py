@@ -28,7 +28,7 @@ print(f"Run times for {points.shape[0]} queries with k={args.knn} and r={args.ra
 print(benchmark(lbvh.build, (points,), n_repeat=10, n_warmup=1))
 
 # prepare the index for knn search with K=16
-lbvh.prepare_knn(args.knn, radius=0.5)
+lbvh.prepare_knn(args.knn, radius=args.radius)
 
 # do one query for each of the points in the dataset
 print(benchmark(lbvh.query_knn, (points,), n_repeat=10, n_warmup=1))
