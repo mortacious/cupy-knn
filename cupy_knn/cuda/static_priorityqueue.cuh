@@ -1,7 +1,3 @@
-//
-// Created by mortacious on 3/31/22.
-//
-
 #pragma once
 #include <cuda/std/cmath>
 #include <cuda/std/limits>

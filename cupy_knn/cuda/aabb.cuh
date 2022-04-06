@@ -1,5 +1,4 @@
 #pragma once
-//#include "util.cuh"
 
 namespace lbvh {
     struct AABB

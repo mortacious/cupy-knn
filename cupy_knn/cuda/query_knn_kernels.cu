@@ -1,7 +1,3 @@
-//
-// Created by mortacious on 3/31/22.
-//
-
 #include "lbvh.cuh"
 #include "static_priorityqueue.cuh"
 #include "vec_math.h"
