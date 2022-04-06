@@ -43,11 +43,11 @@ namespace lbvh {
         __device__ StaticPriorityQueue()
             : StaticPriorityQueue(FLT_MAX) {};
 
-        __device__ KEY top_key() {
+        __device__ KEY top_key() const{
             return _k[0].key;
         }
 
-        __device__ int size() {
+        __device__ int size() const{
             return _size;
         }
 
@@ -61,9 +61,13 @@ namespace lbvh {
             sort();
         }
 
+        __device__ const KeyType<KEY>& operator [](unsigned int index) const {
+            return _k[(SIZE-index)-1];
+        }
+
         __device__ void write_results(unsigned int* indices, KEY* distances, unsigned int* n_neighbors) {
             for(int i=0; i<_size; ++i) {
-                KeyType<KEY>& k = _k[(SIZE-i)-1];
+                auto k = operator[](i);
                 indices[i] = k.id;
                 distances[i] = k.key;
             }

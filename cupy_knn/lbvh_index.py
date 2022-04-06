@@ -11,9 +11,11 @@ _file_path = pathlib.Path(__file__).parent
 with open(_file_path / "cuda/lbvh_kernels.cu", 'r') as f:
     _lbvh_src = f.read()
 
+_compile_flags = ('--std=c++11', f' -I{pathlib.Path(__file__).parent / "cuda"}',
+                  f'-I{_cuda_include}', '--use_fast_math', '--extra-device-vectorization')
+
 _construct_tree_kernels = cp.RawModule(code=_lbvh_src,
-                                       options=('--std=c++11', f' -I{pathlib.Path(__file__).parent / "cuda"}',
-                                                f'-I{_cuda_include}', '--use_fast_math', '--extra-device-vectorization'),
+                                       options=_compile_flags,
                                        name_expressions=('compute_morton_kernel',
                                                          'compute_morton_points_kernel',
                                                          'initialize_tree_kernel',
@@ -77,7 +79,11 @@ class LBVHIndex(object):
         self._compute_free_indices_kernel = _construct_tree_kernels.get_function('compute_free_indices_kernel')
         self._compact_tree_kernel = _construct_tree_kernels.get_function('compact_tree_kernel')
 
-    def prepare_knn(self, k: int, radius: Optional[float] = None):
+    @classmethod
+    def compile_flags(cls, k=1):
+        return _compile_flags + (f'-DK={k}',)
+
+    def prepare_knn(self, k: int, radius: Optional[float] = None, module=None, kernel_name=None):
         """
         Prepare the index for KNN search with the specified k and maximum radius.
 
@@ -95,13 +101,18 @@ class LBVHIndex(object):
             radius = radius**2
 
         self.radius = radius
-        self._query_knn_kernels = cp.RawModule(code=_query_knn_src,
-                                               options=('--std=c++11', f' -I{pathlib.Path(__file__).parent / "cuda"}',
-                                                        f'-DK={self.K}', f'-I{_cuda_include}', '--use_fast_math',
-                                                        '--extra-device-vectorization'),
-                                               name_expressions=('query_knn_kernel',))
 
-        self._query_knn_kernel = self._query_knn_kernels.get_function('query_knn_kernel')
+        if module is None:
+            self._custom_knn = False
+            self._query_knn_kernels = cp.RawModule(code=_query_knn_src,
+                                                   options=self.compile_flags(k=self.K),
+                                                   name_expressions=('query_knn_kernel',))
+            self._query_knn_kernel = self._query_knn_kernels.get_function('query_knn_kernel')
+
+        else:
+            self._custom_knn = True
+            self._query_knn_kernels = module
+            self._query_knn_kernel = self._query_knn_kernels.get_function(kernel_name)
 
     def build(self, points: cp.ndarray):
         """
@@ -204,7 +215,7 @@ class LBVHIndex(object):
         # fetch to root node's location in the tree
         self.root_node = int(root_node.get()[0])
 
-    def query_knn(self, queries: cp.ndarray):
+    def query_knn(self, queries: cp.ndarray, *args):
         """
         Query the search tree for the nearest neighbors of the query points. 'prepare_knn' must have been
         called prior to colling this function to prepare the cuda kernels for the specified number of neighbors.
@@ -245,34 +256,45 @@ class LBVHIndex(object):
         # use the maximum allowed threads per block from the kernel (depends on the number of registers)
         max_threads_per_block = self._query_knn_kernel.attributes['max_threads_per_block']
         block_dim, grid_dim = select_block_grid_sizes(queries.device, queries.shape[0], threads_per_block=max_threads_per_block)
-        indices_out = cp.full((queries.shape[0], self.K), cp.iinfo(cp.uint32).max, dtype=cp.uint32)
-        distances_out = cp.full((queries.shape[0], self.K), cp.finfo(cp.float32).max, dtype=cp.float32)
-        n_neighbors_out = cp.zeros((queries.shape[0]), dtype=cp.uint32)
 
-        self._query_knn_kernel(grid_dim, block_dim, (self.nodes,
-                                                     self.points,
-                                                     self.sorted_indices,
-                                                     cp.uint32(self.root_node),
-                                                     cp.float32(self.radius),
-                                                     queries,
-                                                     indices_out,
-                                                     distances_out,
-                                                     n_neighbors_out,
-                                                     queries.shape[0]))
-        stream.synchronize()
+        if not self._custom_knn:
+            indices_out = cp.full((queries.shape[0], self.K), cp.iinfo(cp.uint32).max, dtype=cp.uint32)
+            distances_out = cp.full((queries.shape[0], self.K), cp.finfo(cp.float32).max, dtype=cp.float32)
+            n_neighbors_out = cp.zeros((queries.shape[0]), dtype=cp.uint32)
+            self._query_knn_kernel(grid_dim, block_dim, (self.nodes,
+                                                         self.points,
+                                                         self.sorted_indices,
+                                                         cp.uint32(self.root_node),
+                                                         cp.float32(self.radius),
+                                                         queries,
+                                                         indices_out,
+                                                         distances_out,
+                                                         n_neighbors_out,
+                                                         queries.shape[0]))
+            stream.synchronize()
+            if queries.shape[0] > self._sort_threshold:
+                indices_tmp = cp.empty_like(indices_out)
+                indices_tmp[sorted_indices] = indices_out  # invert the sorting
+                indices_out = indices_tmp
+                distances_tmp = cp.empty_like(distances_out)
+                distances_tmp[sorted_indices] = distances_out
+                distances_out = distances_tmp
+                n_neighbors_tmp = cp.empty_like(n_neighbors_out)
+                n_neighbors_tmp[sorted_indices] = n_neighbors_out
+                n_neighbors_out = n_neighbors_tmp
 
-        if queries.shape[0] > self._sort_threshold:
-            indices_tmp = cp.empty_like(indices_out)
-            indices_tmp[sorted_indices] = indices_out  # invert the sorting
-            indices_out = indices_tmp
-            distances_tmp = cp.empty_like(distances_out)
-            distances_tmp[sorted_indices] = distances_out
-            distances_out = distances_tmp
-            n_neighbors_tmp = cp.empty_like(n_neighbors_out)
-            n_neighbors_tmp[sorted_indices] = n_neighbors_out
-            n_neighbors_out = n_neighbors_tmp
-
-        return indices_out, distances_out, n_neighbors_out
+            return indices_out, distances_out, n_neighbors_out
+        else:
+            # custom code
+            self._query_knn_kernel(grid_dim, block_dim, (self.nodes,
+                                                         self.points,
+                                                         self.sorted_indices,
+                                                         cp.uint32(self.root_node),
+                                                         cp.float32(self.radius),
+                                                         queries,
+                                                         queries.shape[0],
+                                                         *args))
+            stream.synchronize()
 
     def tree_data(self):
         data = cp.ndarray((self.num_nodes,), dtype=self.tree_dtype, memptr=self.nodes).get()
