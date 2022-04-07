@@ -5,14 +5,15 @@ using namespace lbvh;
 __global__ void query_knn_kernel(const BVHNode *nodes,
                                  const float3* points,
                                  const unsigned int* sorted_indices,
-                                 unsigned int root_index,
+                                 const unsigned int root_index,
                                  const float max_radius,
                                  const float3* queries,
-
+                                 const unsigned int N,
+                                 // custom parameters
                                  unsigned int* indices_out,
                                  float* distances_out,
-                                 unsigned int* n_neighbors_out,
-                                 unsigned int N)
+                                 unsigned int* n_neighbors_out
+                                 )
 {
     unsigned int query_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (query_idx >= N)

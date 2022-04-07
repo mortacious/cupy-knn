@@ -33,7 +33,7 @@ module = cp.RawModule(code=custom_knn_src,
                       name_expressions=('custom_knn_kernel',))
 
 # prepare the index for knn search with K=16
-lbvh.prepare_knn(args.knn, radius=args.radius, module=module, kernel_name='custom_knn_kernel')
+lbvh.prepare_knn(module, 'custom_knn_kernel', radius=args.radius)
 
 means = cp.empty_like(points, dtype=cp.float32)
 # do one query for each of the points in the dataset

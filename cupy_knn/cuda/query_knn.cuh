@@ -118,7 +118,7 @@ namespace lbvh {
 
         StaticPriorityQueue<float, K> queue(max_radius);
         find_KNN(nodes, points, sorted_indices, root_index, query_point, queue);
-        return queue;
+        return std::move(queue);
     }
 }
 
