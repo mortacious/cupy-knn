@@ -47,6 +47,7 @@ setup(
     extras_require={
         'examples': ['plyfile'],
     },
+    include_package_data=True,
     license="MIT",
     classifiers=[
         "Environment :: GPU :: NVIDIA CUDA",

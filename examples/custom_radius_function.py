@@ -6,7 +6,7 @@ import argparse
 import cupy as cp
 import pathlib
 
-parser = argparse.ArgumentParser(description='Benchmark knn queries on a dataset')
+parser = argparse.ArgumentParser(description='Benchmark custom radius queries on a dataset')
 parser.add_argument("input_file", type=str, help='An input ply-file used for the benchmark')
 parser.add_argument("-r", "--radius", type=float, default=0.05,
                     help='The maximum radius the search')
@@ -35,7 +35,7 @@ lbvh.prepare_radius(module, 'custom_radius_kernel', args.radius)
 means = cp.empty_like(points, dtype=cp.float32)
 n_neighbors = cp.empty(points.shape[0], dtype=cp.uint32)
 # do one query for each of the points in the dataset
-print(benchmark(lbvh.query_radius, (points, means, n_neighbors), n_warmup=1, n_repeat=1))
-print(means)
-print(n_neighbors)
+print(benchmark(lbvh.query_radius, (points, means, n_neighbors), n_warmup=1, n_repeat=10))
+print("means", means)
+print("number of neighbors", n_neighbors)
 print("max neighbors", cp.max(n_neighbors))

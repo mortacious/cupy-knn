@@ -25,7 +25,6 @@ namespace lbvh {
             if(dist <= handler.max_distance()) {
                 handler(point, index, dist);
             }
-
         }
     }
 
