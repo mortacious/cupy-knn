@@ -3,11 +3,11 @@
 using namespace lbvh;
 
 __global__ void custom_knn_kernel(const BVHNode *nodes,
-                                 const float3* points,
-                                 const unsigned int* sorted_indices,
+                                 const float3* __restrict__ points,
+                                 const unsigned int* __restrict__ sorted_indices,
                                  unsigned int root_index,
                                  const float max_radius,
-                                 const float3* queries,
+                                 const float3* __restrict__ queries,
                                  unsigned int N,
                                  // custom argments
                                  float3* means_out)
@@ -16,7 +16,7 @@ __global__ void custom_knn_kernel(const BVHNode *nodes,
     if (query_idx >= N)
         return;
 
-    auto queue = find_KNN(nodes, points, sorted_indices, root_index, &queries[query_idx], max_radius);
+    auto queue = query_knn(nodes, points, sorted_indices, root_index, &queries[query_idx], max_radius);
 
     // compute the mean of all nearest neighbors found as an example
     float3 sum = make_float3(0.0, 0.0, 0.0);

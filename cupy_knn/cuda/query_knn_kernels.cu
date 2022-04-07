@@ -3,11 +3,11 @@
 using namespace lbvh;
 
 __global__ void query_knn_kernel(const BVHNode *nodes,
-                                 const float3* points,
-                                 const unsigned int* sorted_indices,
+                                 const float3* __restrict__ points,
+                                 const unsigned int* __restrict__ sorted_indices,
                                  const unsigned int root_index,
                                  const float max_radius,
-                                 const float3* queries,
+                                 const float3* __restrict__ queries,
                                  const unsigned int N,
                                  // custom parameters
                                  unsigned int* indices_out,
@@ -19,7 +19,7 @@ __global__ void query_knn_kernel(const BVHNode *nodes,
     if (query_idx >= N)
         return;
     StaticPriorityQueue<float, K> queue(max_radius);
-    find_KNN(nodes, points, sorted_indices, root_index, &queries[query_idx], queue);
+    query_knn(nodes, points, sorted_indices, root_index, &queries[query_idx], queue);
     __syncwarp(); // synchronize the warp before the write operation
     queue.write_results(&indices_out[query_idx * K], &distances_out[query_idx * K], &n_neighbors_out[query_idx]); // write back the results
 }

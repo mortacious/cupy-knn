@@ -25,9 +25,9 @@ namespace lbvh {
         }
     };
 
-    template<typename KEY, int SIZE>
+    template<typename KEY, unsigned int SIZE>
     struct StaticPriorityQueue {
-        int _size;
+        unsigned int _size;
 
         KeyType<KEY> _k[SIZE];
 
@@ -43,15 +43,19 @@ namespace lbvh {
         __device__ StaticPriorityQueue()
             : StaticPriorityQueue(FLT_MAX) {};
 
-        __device__ KEY top_key() const{
+        __device__ KEY max_distance() const{
             return _k[0].key;
         }
 
-        __device__ int size() const{
+        __device__ unsigned int size() const{
             return _size;
         }
 
-        __device__ void push(unsigned int index, const KEY& key) {
+        __device__ unsigned int max_size() const {
+            return SIZE;
+        }
+
+        __device__ void operator()(const float3& point, unsigned int index, const KEY& key) {
             KeyType<KEY> k;
             k.key = key;
             k.id = index;
@@ -60,7 +64,6 @@ namespace lbvh {
 
             sort();
         }
-
         __device__ const KeyType<KEY>& operator [](unsigned int index) const {
             return _k[(SIZE-index)-1];
         }

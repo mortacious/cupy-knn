@@ -67,8 +67,8 @@ class LBVHIndex(object):
         self.tree_dtype = cp.dtype({"names": ("aabb", "parent", "child_left",
                                               "child_right", "atomic", "range_left", "range_right"),
                                     "formats": ("6f4", "u4", "u4", "u4", "i4", "u4", "u4")}, align=True)
-        self._query_knn_module = None
-        self._query_knn_kernel = None
+        self._query_module = None
+        self._query_kernel = None
 
         self._compute_morton_kernel_float = _construct_tree_kernels.get_function('compute_morton_kernel')
         self._compute_morton_points_kernel_float = _construct_tree_kernels.get_function('compute_morton_points_kernel')
@@ -144,7 +144,7 @@ class LBVHIndex(object):
                                  const unsigned int N, // the total number of queries
                                  <other custom parameters>
                                  )
-            All parameters except the custom roms will be passed to the kernel automatically. any custom parameters must
+            All parameters except the custom ones will be passed to the kernel automatically. any custom parameters must
             be supplied to the 'query_knn' function as additional arguments.
 
         radius: float
@@ -164,8 +164,43 @@ class LBVHIndex(object):
         self.radius = radius
 
         self._custom_knn = _custom_knn
-        self._query_knn_module = module
-        self._query_knn_kernel = self._query_knn_module.get_function(kernel_name)
+        self._query_module = module
+        self._query_kernel = self._query_module.get_function(kernel_name)
+
+    def prepare_radius(self, module: cp.RawModule, kernel_name: str, radius):
+        """
+        Prepare the index for radius search using the specified custom module and kernel name.
+
+        Parameters
+        ----------
+        module: cp.RawModule
+            The module containing the kernel code for the query. The module should be compiled using the default compiler
+            parameters which can be obtained by calling 'compile_flags'.
+
+        kernel_name: str
+            The name of the query kernel to call. The kernel must support at least the following signature:
+            __global__ void query_knn_kernel(
+                const BVHNode *nodes, // the nodes of the bvh tree
+                const float3* points, // the points in the bvh tree
+                const unsigned int* sorted_indices, // the sorted point indices
+                const unsigned int root_index, // the tree's root index
+                const float max_radius, // the maximum search radius
+                const float3* queries, // the query points
+                const unsigned int N, // the total number of queries
+                <other custom parameters>
+            )
+            All parameters except the custom ones will be passed to the kernel automatically. any custom parameters must
+            be supplied to the 'query_radius' function as additional arguments.
+
+        radius: float
+            The maximum search radius.
+        """
+        self.mode = 'radius'
+
+        self.radius = radius**2  # squared radius
+
+        self._query_module = module
+        self._query_kernel = self._query_module.get_function(kernel_name)
 
     def build(self, points: cp.ndarray):
         """
@@ -315,7 +350,7 @@ class LBVHIndex(object):
             stream.synchronize()
 
         # use the maximum allowed threads per block from the kernel (depends on the number of registers)
-        max_threads_per_block = self._query_knn_kernel.attributes['max_threads_per_block']
+        max_threads_per_block = self._query_kernel.attributes['max_threads_per_block']
         block_dim, grid_dim = select_block_grid_sizes(queries.device, queries.shape[0], threads_per_block=max_threads_per_block)
 
         if self._custom_knn > 0:
@@ -326,14 +361,14 @@ class LBVHIndex(object):
             args = (indices_out, distances_out, n_neighbors_out)
 
         # custom code
-        self._query_knn_kernel(grid_dim, block_dim, (self.nodes,
-                                                     self.points,
-                                                     self.sorted_indices,
-                                                     cp.uint32(self.root_node),
-                                                     cp.float32(self.radius),
-                                                     queries,
-                                                     queries.shape[0],
-                                                     *args))
+        self._query_kernel(grid_dim, block_dim, (self.nodes,
+                                                 self.points,
+                                                 self.sorted_indices,
+                                                 cp.uint32(self.root_node),
+                                                 cp.float32(self.radius),
+                                                 queries,
+                                                 queries.shape[0],
+                                                 *args))
         stream.synchronize()
 
         if self._custom_knn > 0 and queries.shape[0] > self._sort_threshold:
@@ -348,6 +383,40 @@ class LBVHIndex(object):
             n_neighbors_out = n_neighbors_tmp
 
             return indices_out, distances_out, n_neighbors_out
+
+    def query_radius(self, queries: cp.ndarray, *args):
+        if self.num_nodes < 0:
+            raise ValueError("Index has not been built yet. Call 'build' first.")
+        if self.mode != 'radius':
+            raise ValueError("Index has not been prepared for radius query. Use 'prepare_radius' first.")
+
+        queries = cp.ascontiguousarray(cp.asarray(queries, dtype=cp.float32)).reshape(-1, 3)
+
+        stream = cp.cuda.get_current_stream()
+
+        # only for large queries: sort them in morton order to prevent too much warp divergence on tree traversal
+        if queries.shape[0] > self._sort_threshold:
+            morton_codes = cp.empty(queries.shape[0], dtype=cp.uint64)
+            block_dim, grid_dim = select_block_grid_sizes(queries.device, queries.shape[0])
+            self._compute_morton_points_kernel_float(grid_dim, block_dim, (queries, self.extent, morton_codes, queries.shape[0]))
+            sorted_indices = cp.argsort(morton_codes)
+            queries = queries[sorted_indices]
+            stream.synchronize()
+
+        # use the maximum allowed threads per block from the kernel (depends on the number of registers)
+        max_threads_per_block = self._query_kernel.attributes['max_threads_per_block']
+        block_dim, grid_dim = select_block_grid_sizes(queries.device, queries.shape[0], threads_per_block=max_threads_per_block)
+
+        # custom code
+        self._query_kernel(grid_dim, block_dim, (self.nodes,
+                                                 self.points,
+                                                 self.sorted_indices,
+                                                 cp.uint32(self.root_node),
+                                                 cp.float32(self.radius),
+                                                 queries,
+                                                 queries.shape[0],
+                                                 *args))
+        stream.synchronize()
 
     def tree_data(self, numpy: bool = True):
         """
