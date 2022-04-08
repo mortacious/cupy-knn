@@ -34,8 +34,8 @@ class LBVHIndex(object):
     leaf_size: int
         The maximum leaf size in the tree
 
-    sort_threshold: int
-        Threshold, above which the query points will be sorted in morton order prior
+    sort_queries: bool
+        If True the query points will be sorted in morton order prior
         to passing them to the knn query kernel to prevent warp divergence.
 
     compact: bool
@@ -47,11 +47,11 @@ class LBVHIndex(object):
         This requires a full copy, which might not be possible on the gpu depending on the index size.
         If compact is False this parameter is ignored.
     """
-    def __init__(self, leaf_size: int = 32, sort_threshold: int = 10_000, compact=True, shrink_to_fit=False):
+    def __init__(self, leaf_size: int = 32, sort_queries: bool = True, compact=True, shrink_to_fit=False):
         self.num_objects = -1
         self.num_nodes = -1
         self.leaf_size = leaf_size
-        self._sort_threshold = sort_threshold
+        self.sort_queries = sort_queries
         self.compact = compact
         self.shrink_to_fit = shrink_to_fit
 
@@ -330,6 +330,10 @@ class LBVHIndex(object):
         n_neighbors: cp.ndarray of shape (n,)
             The number of nearest neighbors found
             Note: This is only returned in default mode (if 'prepare_knn_default' was called)
+        query_order: cp.ndarray of shape (n,)
+            The query indices in morton order. This is returned only if 'prepare_knn' was called directly with custom
+            code and sort_queries is True in order to sort the returned values.
+
         """
         if self.num_nodes < 0:
             raise ValueError("Index has not been built yet. Call 'build' first.")
@@ -341,7 +345,7 @@ class LBVHIndex(object):
         stream = cp.cuda.get_current_stream()
 
         # only for large queries: sort them in morton order to prevent too much warp divergence on tree traversal
-        if queries.shape[0] > self._sort_threshold:
+        if self.sort_queries:
             morton_codes = cp.empty(queries.shape[0], dtype=cp.uint64)
             block_dim, grid_dim = select_block_grid_sizes(queries.device, queries.shape[0])
             self._compute_morton_points_kernel_float(grid_dim, block_dim, (queries, self.extent, morton_codes, queries.shape[0]))
@@ -371,20 +375,43 @@ class LBVHIndex(object):
                                                  *args))
         stream.synchronize()
 
-        if self._custom_knn > 0 and queries.shape[0] > self._sort_threshold:
-            indices_tmp = cp.empty_like(indices_out)
-            indices_tmp[sorted_indices] = indices_out  # invert the sorting
-            indices_out = indices_tmp
-            distances_tmp = cp.empty_like(distances_out)
-            distances_tmp[sorted_indices] = distances_out
-            distances_out = distances_tmp
-            n_neighbors_tmp = cp.empty_like(n_neighbors_out)
-            n_neighbors_tmp[sorted_indices] = n_neighbors_out
-            n_neighbors_out = n_neighbors_tmp
+        if self.sort_queries:
+            if self._custom_knn > 0:
+                indices_tmp = cp.empty_like(indices_out)
+                indices_tmp[sorted_indices] = indices_out  # invert the sorting
+                indices_out = indices_tmp
+                distances_tmp = cp.empty_like(distances_out)
+                distances_tmp[sorted_indices] = distances_out
+                distances_out = distances_tmp
+                n_neighbors_tmp = cp.empty_like(n_neighbors_out)
+                n_neighbors_tmp[sorted_indices] = n_neighbors_out
+                n_neighbors_out = n_neighbors_tmp
 
-            return indices_out, distances_out, n_neighbors_out
+                return indices_out, distances_out, n_neighbors_out
+            else:
+                return sorted_indices
 
     def query_radius(self, queries: cp.ndarray, *args):
+        """
+        Do a radius search on the tree for the query points. 'prepare_radius' must have been
+        called prior to colling this function to prepare the cuda kernels for the search. As returning an arbitrary number of
+        neighbors for each point is not really feasible from a single cuda kernel,
+        this function requires custom kernels to process the neighbors.
+
+        Parameters
+        ----------
+        queries: cp.ndarray of shape (n, 3)
+            The query points to search the nearest neighbors.
+
+        *args: tuple
+            Additional args passed to the kernel.
+
+        Returns
+        -------
+        query_order: cp.ndarray of shape (n,)
+            The query indices in morton order. This is returned only if 'prepare_knn' was called directly with custom
+            code and sort_queries is True in order to sort the returned values.
+        """
         if self.num_nodes < 0:
             raise ValueError("Index has not been built yet. Call 'build' first.")
         if self.mode != 'radius':
@@ -395,7 +422,7 @@ class LBVHIndex(object):
         stream = cp.cuda.get_current_stream()
 
         # only for large queries: sort them in morton order to prevent too much warp divergence on tree traversal
-        if queries.shape[0] > self._sort_threshold:
+        if self.sort_queries:
             morton_codes = cp.empty(queries.shape[0], dtype=cp.uint64)
             block_dim, grid_dim = select_block_grid_sizes(queries.device, queries.shape[0])
             self._compute_morton_points_kernel_float(grid_dim, block_dim, (queries, self.extent, morton_codes, queries.shape[0]))
@@ -417,6 +444,9 @@ class LBVHIndex(object):
                                                  queries.shape[0],
                                                  *args))
         stream.synchronize()
+
+        if self.sort_queries:
+            return sorted_indices
 
     def tree_data(self, numpy: bool = True):
         """
