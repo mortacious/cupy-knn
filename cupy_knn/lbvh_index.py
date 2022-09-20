@@ -140,7 +140,8 @@ class LBVHIndex(object):
                                  const unsigned int* sorted_indices, // the sorted point indices
                                  const unsigned int root_index, // the tree's root index
                                  const float max_radius, // the maximum search radius
-                                 const float3* queries, // the query points
+                                 const float3* query_points, // the query points
+                                 const unsigned int* __restrict__ sorted_queries, // the indices of the query points sorted in morton order if sorting is enabled
                                  const unsigned int N, // the total number of queries
                                  <other custom parameters>
                                  )
@@ -185,7 +186,8 @@ class LBVHIndex(object):
                 const unsigned int* sorted_indices, // the sorted point indices
                 const unsigned int root_index, // the tree's root index
                 const float max_radius, // the maximum search radius
-                const float3* queries, // the query points
+                const float3* query_points, // the query points
+                const unsigned int* __restrict__ sorted_queries, // the indices of the query points sorted in morton order if sorting is enabled
                 const unsigned int N, // the total number of queries
                 <other custom parameters>
             )
@@ -330,9 +332,10 @@ class LBVHIndex(object):
         n_neighbors: cp.ndarray of shape (n,)
             The number of nearest neighbors found
             Note: This is only returned in default mode (if 'prepare_knn_default' was called)
-        query_order: cp.ndarray of shape (n,)
-            The query indices in morton order. This is returned only if 'prepare_knn' was called directly with custom
-            code and sort_queries is True in order to sort the returned values.
+        *args: tuple
+            The additional arguments to the function.
+            This is returned only if 'prepare_knn' was called directly with custom
+            code.
 
         """
         if self.num_nodes < 0:
@@ -350,8 +353,9 @@ class LBVHIndex(object):
             block_dim, grid_dim = select_block_grid_sizes(queries.device, queries.shape[0])
             self._compute_morton_points_kernel_float(grid_dim, block_dim, (queries, self.extent, morton_codes, queries.shape[0]))
             sorted_indices = cp.argsort(morton_codes)
-            queries = queries[sorted_indices]
             stream.synchronize()
+        else:
+            sorted_indices = cp.arange(queries.shape[0], dtype=cp.uint32)
 
         # use the maximum allowed threads per block from the kernel (depends on the number of registers)
         max_threads_per_block = self._query_kernel.attributes['max_threads_per_block']
@@ -371,25 +375,12 @@ class LBVHIndex(object):
                                                  cp.uint32(self.root_node),
                                                  cp.float32(self.radius),
                                                  queries,
+                                                 sorted_indices,
                                                  queries.shape[0],
                                                  *args))
         stream.synchronize()
 
-        if self.sort_queries:
-            if self._custom_knn > 0:
-                indices_tmp = cp.empty_like(indices_out)
-                indices_tmp[sorted_indices] = indices_out  # invert the sorting
-                indices_out = indices_tmp
-                distances_tmp = cp.empty_like(distances_out)
-                distances_tmp[sorted_indices] = distances_out
-                distances_out = distances_tmp
-                n_neighbors_tmp = cp.empty_like(n_neighbors_out)
-                n_neighbors_tmp[sorted_indices] = n_neighbors_out
-                n_neighbors_out = n_neighbors_tmp
-
-                return indices_out, distances_out, n_neighbors_out
-            else:
-                return sorted_indices
+        return args
 
     def query_radius(self, queries: cp.ndarray, *args):
         """
@@ -427,8 +418,9 @@ class LBVHIndex(object):
             block_dim, grid_dim = select_block_grid_sizes(queries.device, queries.shape[0])
             self._compute_morton_points_kernel_float(grid_dim, block_dim, (queries, self.extent, morton_codes, queries.shape[0]))
             sorted_indices = cp.argsort(morton_codes)
-            queries = queries[sorted_indices]
             stream.synchronize()
+        else:
+            sorted_indices = cp.arange(queries.shape[0], dtype=cp.uint32)
 
         # use the maximum allowed threads per block from the kernel (depends on the number of registers)
         max_threads_per_block = self._query_kernel.attributes['max_threads_per_block']
@@ -441,12 +433,12 @@ class LBVHIndex(object):
                                                  cp.uint32(self.root_node),
                                                  cp.float32(self.radius),
                                                  queries,
+                                                 sorted_indices,
                                                  queries.shape[0],
                                                  *args))
         stream.synchronize()
 
-        if self.sort_queries:
-            return sorted_indices
+        return args
 
     def tree_data(self, numpy: bool = True):
         """
