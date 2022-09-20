@@ -140,7 +140,8 @@ class LBVHIndex(object):
                                  const unsigned int* sorted_indices, // the sorted point indices
                                  const unsigned int root_index, // the tree's root index
                                  const float max_radius, // the maximum search radius
-                                 const float3* queries, // the query points
+                                 const float3* query_points, // the query points
+                                 const unsigned int* __restrict__ sorted_queries, // the indices of the query points sorted in morton order if sorting is enabled
                                  const unsigned int N, // the total number of queries
                                  <other custom parameters>
                                  )
@@ -185,7 +186,8 @@ class LBVHIndex(object):
                 const unsigned int* sorted_indices, // the sorted point indices
                 const unsigned int root_index, // the tree's root index
                 const float max_radius, // the maximum search radius
-                const float3* queries, // the query points
+                const float3* query_points, // the query points
+                const unsigned int* __restrict__ sorted_queries, // the indices of the query points sorted in morton order if sorting is enabled
                 const unsigned int N, // the total number of queries
                 <other custom parameters>
             )
