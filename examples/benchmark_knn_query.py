@@ -14,14 +14,19 @@ parser.add_argument("-l", "--leafsize", type=int, default=32, help="The maximum 
 parser.add_argument("-c", "--compact", action='store_true', help="Compact the tree to remove unused spaces in between")
 parser.add_argument("-s", "--shrink_to_fit", action='store_true', help="Shrink to buffer size of the tree to match "
                                                                        "it's content after compaction")
+parser.add_argument("--sort", action='store_true', help="Sort the queries by their morton index before execution")
 
 args = parser.parse_args()
 pc = PlyData.read(args.input_file)
 
 points = np.stack([pc.elements[0].data['x'], pc.elements[0].data['y'], pc.elements[0].data['z']], axis=1)
 
-print(f"Benchmarking KNN Search for {points.shape[0]} points with leafsize {args.leafsize} and compact={args.compact} + shrink to fit={args.shrink_to_fit}.")
-lbvh = LBVHIndex(leaf_size=args.leafsize, compact=args.compact, shrink_to_fit=args.shrink_to_fit)
+print(f"Benchmarking KNN Search for {points.shape[0]} points with leafsize {args.leafsize} and compact={args.compact} + "
+      f"shrink to fit={args.shrink_to_fit} + sort={args.sort}.")
+lbvh = LBVHIndex(leaf_size=args.leafsize,
+                 compact=args.compact,
+                 shrink_to_fit=args.shrink_to_fit,
+                 sort_queries=args.sort)
 print(f"Run times for {points.shape[0]} queries with k={args.knn} and r={args.radius}: ")
 
 # build the index
