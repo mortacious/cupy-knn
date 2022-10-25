@@ -305,6 +305,23 @@ class LBVHIndex(object):
         # fetch to root node's location in the tree
         self.root_node = int(root_node.get()[0])
 
+    def _prepare_queries(self, queries: cp.ndarray):
+        queries = cp.ascontiguousarray(cp.asarray(queries, dtype=cp.float32)).reshape(-1, 3)
+
+        stream = cp.cuda.get_current_stream()
+
+        # only for large queries: sort them in morton order to prevent too much warp divergence on tree traversal
+        if self.sort_queries:
+            morton_codes = cp.empty(queries.shape[0], dtype=cp.uint64)
+            block_dim, grid_dim = select_block_grid_sizes(queries.device, queries.shape[0])
+            self._compute_morton_points_kernel_float(grid_dim, block_dim, (queries, self.extent, morton_codes, queries.shape[0]))
+            sorted_indices = cp.argsort(morton_codes)
+            stream.synchronize()
+        else:
+            sorted_indices = cp.arange(queries.shape[0], dtype=cp.uint32)
+
+        return queries, sorted_indices
+
     def query_knn(self, queries: cp.ndarray, *args):
         """
         Query the search tree for the nearest neighbors of the query points. 'prepare_knn' must have been
@@ -343,23 +360,12 @@ class LBVHIndex(object):
         if self.mode != 'knn':
             raise ValueError("Index has not been prepared for knn query. Use 'prepare_knn' or 'prepare_knn_default' first.")
 
-        queries = cp.ascontiguousarray(cp.asarray(queries, dtype=cp.float32)).reshape(-1, 3)
-
-        stream = cp.cuda.get_current_stream()
-
-        # only for large queries: sort them in morton order to prevent too much warp divergence on tree traversal
-        if self.sort_queries:
-            morton_codes = cp.empty(queries.shape[0], dtype=cp.uint64)
-            block_dim, grid_dim = select_block_grid_sizes(queries.device, queries.shape[0])
-            self._compute_morton_points_kernel_float(grid_dim, block_dim, (queries, self.extent, morton_codes, queries.shape[0]))
-            sorted_indices = cp.argsort(morton_codes)
-            stream.synchronize()
-        else:
-            sorted_indices = cp.arange(queries.shape[0], dtype=cp.uint32)
+        queries, sorted_indices = self._prepare_queries(queries)
 
         # use the maximum allowed threads per block from the kernel (depends on the number of registers)
         max_threads_per_block = self._query_kernel.attributes['max_threads_per_block']
         block_dim, grid_dim = select_block_grid_sizes(queries.device, queries.shape[0], threads_per_block=max_threads_per_block)
+        stream = cp.cuda.get_current_stream()
 
         if self._custom_knn > 0:
             indices_out = cp.full((queries.shape[0], self._custom_knn), cp.iinfo(cp.uint32).max, dtype=cp.uint32)
@@ -408,23 +414,12 @@ class LBVHIndex(object):
         if self.mode != 'radius':
             raise ValueError("Index has not been prepared for radius query. Use 'prepare_radius' first.")
 
-        queries = cp.ascontiguousarray(cp.asarray(queries, dtype=cp.float32)).reshape(-1, 3)
-
-        stream = cp.cuda.get_current_stream()
-
-        # only for large queries: sort them in morton order to prevent too much warp divergence on tree traversal
-        if self.sort_queries:
-            morton_codes = cp.empty(queries.shape[0], dtype=cp.uint64)
-            block_dim, grid_dim = select_block_grid_sizes(queries.device, queries.shape[0])
-            self._compute_morton_points_kernel_float(grid_dim, block_dim, (queries, self.extent, morton_codes, queries.shape[0]))
-            sorted_indices = cp.argsort(morton_codes)
-            stream.synchronize()
-        else:
-            sorted_indices = cp.arange(queries.shape[0], dtype=cp.uint32)
+        queries, sorted_indices = self._prepare_queries(queries)
 
         # use the maximum allowed threads per block from the kernel (depends on the number of registers)
         max_threads_per_block = self._query_kernel.attributes['max_threads_per_block']
         block_dim, grid_dim = select_block_grid_sizes(queries.device, queries.shape[0], threads_per_block=max_threads_per_block)
+        stream = cp.cuda.get_current_stream()
 
         # custom code
         self._query_kernel(grid_dim, block_dim, (self.nodes,
