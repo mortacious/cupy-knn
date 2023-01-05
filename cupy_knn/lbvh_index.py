@@ -175,7 +175,8 @@ class LBVHIndex(object):
         Parameters
         ----------
         module: cp.RawModule
-            The module containing the kernel code for the query. The module should be compiled using the default compiler
+            The module containing the kernel code for the query.
+            The module should be compiled using the default compiler
             parameters which can be obtained by calling 'compile_flags'.
 
         kernel_name: str
@@ -280,7 +281,9 @@ class LBVHIndex(object):
 
                 # compute the isum parameter to get the indices of the free elements
                 isum = (cp.arange(self.num_nodes, dtype=cp.uint32)-valid_sums_aligned)
-                free_indices_size = int(isum[new_node_count].get())  # number of free elements in the optimized tree array
+
+                # number of free elements in the optimized tree array
+                free_indices_size = int(isum[new_node_count].get())
 
                 free = valid[:free_indices_size]  # reuse the valid space as it is not needed any more
 
@@ -293,7 +296,10 @@ class LBVHIndex(object):
 
                 block_dim, grid_dim = select_block_grid_sizes(isum.device, self.num_nodes)
 
-                self._compact_tree_kernel(grid_dim, block_dim, (self.nodes, root_node, valid_sums_aligned, free, first_moved, new_node_count, self.num_nodes))
+                self._compact_tree_kernel(grid_dim,
+                                          block_dim,
+                                          (self.nodes, root_node, valid_sums_aligned, free, first_moved,
+                                           new_node_count, self.num_nodes))
 
                 if self.shrink_to_fit:
                     nodes_old = self.nodes
@@ -315,7 +321,7 @@ class LBVHIndex(object):
             morton_codes = cp.empty(queries.shape[0], dtype=cp.uint64)
             block_dim, grid_dim = select_block_grid_sizes(queries.device, queries.shape[0])
             self._compute_morton_points_kernel_float(grid_dim, block_dim, (queries, self.extent, morton_codes, queries.shape[0]))
-            sorted_indices = cp.argsort(morton_codes)
+            sorted_indices = cp.argsort(morton_codes).astype(cp.uint32)
             stream.synchronize()
         else:
             sorted_indices = cp.arange(queries.shape[0], dtype=cp.uint32)
@@ -327,8 +333,8 @@ class LBVHIndex(object):
         Query the search tree for the nearest neighbors of the query points. 'prepare_knn' must have been
         called prior to colling this function to prepare the cuda kernels for the specified number of neighbors.
         If 'prepare_knn_default' was called instead of 'prepare_knn' with custom query code, the function returns the
-        indices, distances and number of neighbors for each query point. Otherwise the function returns nothing and all outputs
-        have to be passed through the additional args.
+        indices, distances and number of neighbors for each query point.
+        Otherwise the function returns nothing and all outputs have to be passed through the additional args.
 
         Parameters
         ----------
@@ -358,13 +364,15 @@ class LBVHIndex(object):
         if self.num_nodes < 0:
             raise ValueError("Index has not been built yet. Call 'build' first.")
         if self.mode != 'knn':
-            raise ValueError("Index has not been prepared for knn query. Use 'prepare_knn' or 'prepare_knn_default' first.")
+            raise ValueError("Index has not been prepared for knn query. "
+                             "Use 'prepare_knn' or 'prepare_knn_default' first.")
 
         queries, sorted_indices = self._prepare_queries(queries)
 
         # use the maximum allowed threads per block from the kernel (depends on the number of registers)
         max_threads_per_block = self._query_kernel.attributes['max_threads_per_block']
-        block_dim, grid_dim = select_block_grid_sizes(queries.device, queries.shape[0], threads_per_block=max_threads_per_block)
+        block_dim, grid_dim = select_block_grid_sizes(queries.device, queries.shape[0],
+                                                      threads_per_block=max_threads_per_block)
         stream = cp.cuda.get_current_stream()
 
         if self._custom_knn > 0:
@@ -418,7 +426,8 @@ class LBVHIndex(object):
 
         # use the maximum allowed threads per block from the kernel (depends on the number of registers)
         max_threads_per_block = self._query_kernel.attributes['max_threads_per_block']
-        block_dim, grid_dim = select_block_grid_sizes(queries.device, queries.shape[0], threads_per_block=max_threads_per_block)
+        block_dim, grid_dim = select_block_grid_sizes(queries.device, queries.shape[0],
+                                                      threads_per_block=max_threads_per_block)
         stream = cp.cuda.get_current_stream()
 
         # custom code
