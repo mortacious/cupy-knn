@@ -6,7 +6,7 @@ import argparse
 
 parser = argparse.ArgumentParser(description='Benchmark knn queries on a dataset')
 parser.add_argument("input_file", type=str, help='An input ply-file used for the benchmark')
-parser.add_argument("-k", "--knn", type=int, default=16,
+parser.add_argument("-k", "--knn", type=int, nargs='+', default=16,
                     help='The number of nearest neighbors to find for each point in the input file')
 parser.add_argument("-r", "--radius", type=float, default=None,
                     help='The maximum radius the search the nearest neighbors in')
@@ -32,8 +32,9 @@ print(f"Run times for {points.shape[0]} queries with k={args.knn} and r={args.ra
 # build the index
 print(benchmark(lbvh.build, (points,), n_repeat=10, n_warmup=1))
 
-# prepare the index for knn search with K=16
-lbvh.prepare_knn_default(args.knn, radius=args.radius)
 
-# do one query for each of the points in the dataset
-print(benchmark(lbvh.query_knn, (points,), n_repeat=10, n_warmup=1))
+for ki in args.knn:
+    # prepare the index for knn search with K=16
+    lbvh.prepare_knn_default(ki, radius=args.radius)
+    # do one query for each of the points in the dataset
+    print(benchmark(lbvh.query_knn, (points,), n_repeat=10, n_warmup=1, name=f"{lbvh.query_knn.__name__}:{ki}"))
