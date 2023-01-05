@@ -1,4 +1,4 @@
-    from cupy_knn import LBVHIndex
+from cupy_knn import LBVHIndex
 from cupyx.profiler import benchmark
 from plyfile import PlyData
 import numpy as np
