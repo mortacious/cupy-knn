@@ -6,3 +6,5 @@ __pycache__/
 dask-worker-space/
 .*
 pkg/
+cupy_knn/_version.py
+build/

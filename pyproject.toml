@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=45", "setuptools_scm[toml]>=6.2"]
+build-backend = 'setuptools.build_meta'
+
+[project]
+name = "cupy-knn"
+authors = [
+    {name = "Felix Igelbrink", email = "felix.igelbrink@dfki.de"},
+]
+description = 'A fast nearest neighbor index cuda implementation for 3D points using a lightweight BVH-tree.'
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT License"}
+classifiers = [
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development",
+]
+dynamic = ["version"]
+dependencies = ["numpy"]
+
+[project.optional-dependencies]
+default = ["cupy"]
+cuda11x = ["cupy-cuda11x"]
+cuda12x = ["cupy-cuda12x"]
+
+[project.urls]
+Hompage ="https://github.com/mortacious/cupy-knn"
+"Bug Tracker" = "https://github.com/mortacious/cupy-knn/issues"
+
+[tool.setuptools_scm]
+write_to = "cupy_knn/_version.py"
+version_scheme = "release-branch-semver"
+
+[tool.setuptools.packages.find]
+include = [
+    'cupy_knn'
+]
