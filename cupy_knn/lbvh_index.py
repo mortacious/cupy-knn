@@ -216,6 +216,9 @@ class LBVHIndex(object):
         points: cp.ndarray of shape (n, 3)
             The 3-D points to build the index from.
         """
+
+        stream = cp.cuda.get_current_stream()
+
         self.points = cp.ascontiguousarray(cp.asarray(points, dtype=cp.float32)).reshape(-1, 3)
 
         assert len(self.points.shape) == 2 and self.points.shape[1] == 3, "Only 3-D points supported"
@@ -308,6 +311,7 @@ class LBVHIndex(object):
 
                 self.num_nodes = new_node_count
 
+        stream.synchronize()
         # fetch to root node's location in the tree
         self.root_node = int(root_node.get()[0])
 
