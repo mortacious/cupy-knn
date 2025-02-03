@@ -40,7 +40,8 @@ Issues = "https://github.com/mortacious/cupy-knn/issues"
 
 [tool.setuptools_scm]
 write_to = "cupy_knn/_version.py"
-version_scheme = "release-branch-semver"
+version_scheme = "only-version"
+local_scheme = "no-local-version"
 
 [tool.setuptools.packages.find]
 include = [
