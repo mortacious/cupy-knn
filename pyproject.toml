@@ -9,7 +9,7 @@ authors = [
 ]
 description = 'A fast nearest neighbor index cuda implementation for 3D points using a lightweight BVH-tree.'
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 license = {text = "MIT License"}
 classifiers = [
     "Environment :: GPU :: NVIDIA CUDA",
@@ -34,7 +34,7 @@ cuda12x = ["cupy-cuda12x"]
 
 [project.urls]
 Hompage ="https://github.com/mortacious/cupy-knn"
-"Bug Tracker" = "https://github.com/mortacious/cupy-knn/issues"
+Issues = "https://github.com/mortacious/cupy-knn/issues"
 
 [tool.setuptools_scm]
 write_to = "cupy_knn/_version.py"
