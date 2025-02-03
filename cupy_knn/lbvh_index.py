@@ -251,7 +251,7 @@ class LBVHIndex(object):
         # allocate space for the nodes as a raw cuda array
         self.nodes = cp.cuda.alloc(self.tree_dtype.itemsize * self.num_nodes)
 
-        root_node = cp.full((1,), cp.iinfo(np.uint32).max, dtype=cp.uint32)
+        root_node = cp.full((1,), cp.uint32(cp.iinfo(np.uint32).max), dtype=cp.uint32)
 
         self._initialize_tree_kernel_float(grid_dim, block_dim, (self.nodes,
                                                                  aabbs,
@@ -261,7 +261,7 @@ class LBVHIndex(object):
                                                                 morton_codes,
                                                                 self.num_objects))
         if self.leaf_size > 1:
-            valid = cp.full(self.num_nodes, 1, dtype=cp.uint32)
+            valid = cp.full(self.num_nodes, cp.uint32(1), dtype=cp.uint32)
             self._optimize_tree_kernel_float(grid_dim, block_dim, (self.nodes,
                                                                    root_node,
                                                                    valid,
